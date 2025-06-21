@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<link href="./時刻表style.css" rel="stylesheet"></link>
+<title>路線時刻表生成プログラム.html</title>
+</head>
+<body>
+<!--
+メモ
+初期列車、間を抽出できるように 
+駅と時刻を抽出
+はじめに、各停から全駅名を抽出
+間なし　通過判定　==に切り替え可能
+以降なし　終点 最後の停車駅以下は省略  分岐まで全通過は？
+以降その路線にない ほかの路線へ直通判定
+着時刻表示する駅
+途中始発・途中合流は各駅か可能性のある駅調べて検出
+始発駅から次の「着時刻を表示する駅」までの間で
+発着番線: ekitanから取得(あとから)
+n駅先で分岐する列車は別路線として扱い、非表示に
+表の編集もできるようにする
+オプション設定:始発、終着駅 着時刻や発着番線、列車番号等の表示の有無
+(都道府県)などYahoo固有の駅名表示をどうするかはあとで調節する
+-->
+<!--
+大阪環状線問題　1回目と2回目の間(つまり環状線の駅あるいは同名の駅)が表の中にあるときでも2回目以降の時も。 →解決
+順序問題：着時刻より後に発車する列車が前には来ないようにする。ただ、より後ろの列車が先発する場合、それよりは後ろに来るようにする。
+-->
+<!--
+改善点：
+1.hasEndedが機能していない
+2.開始駅終了駅はあるが、途中の区間を抜けるようにする
+3.初期列車の順番を変えられるようにする
+4.ほかの線区を経由の入力をわかりやすくする
+5.挿入の基準駅を「表上に初めにあらわれる駅」以外にもできるようにする。特に、ほかに停車列車がない駅が基準駅になるのを回避する。
+6.入れ替え後に解除する
+7.有馬温泉問題
+-->
+<!--
+YahooのURL
+https://transit.yahoo.co.jp/timetable/駅/路線(/列車)?kind=平日か土曜か休日か
+-->
+<div id="toYahoo"><a target="_blank" href="https://transit.yahoo.co.jp/timetable">時刻表検索トップ</a>
+<!--<form method="post" action="https://transit.yahoo.co.jp/timetable"><input name="q" title="駅名を入力" placeholder="駅名を入力" id="inYahoo"><button id="toYahooBtn" type="submit">検索</button></form>--></div>
+<button style="display:none" type="button" onclick="opw()">開く</button>
+<!--オプション設定-->
+<div id="opSetting">
+<input list="staList" onchange="dL(1)" title="開始駅" placeholder="開始駅" id="stSta">
+<input list="staList" onchange="dL(1)" title="終了駅" placeholder="終了駅" id="enSta">
+<select list="staList" id="elimSel" multiple><option id="elimSelDefault">取り除く駅を選択(複数選択可)</option></select><button onclick="elimSta()">選択した駅を取り除く</button><button onclick="document.getElementById('elimSel').selectedIndex=-1">キャンセル</button>
+<input style="display:none" title="着時刻を表示する駅" onchange="if(this.value==''){document.getElementById('arTimeStaSelect').selectedIndex=-1}" placeholder="着時刻を表示する駅" id="arTimeSta"><select onchange="selectChange(this,document.querySelector('#arTimeSta'))" id="arTimeStaSelect" multiple title="着時刻を表示する駅"><option>着時刻を表示する駅</option></select><button onclick="document.getElementById('arTimeStaSelect').selectedIndex=-1">選択をクリア</button>
+<datalist id="staList"></datalist>
+<table id="defTraForm"><tbody><tr><td><textarea title="初期列車" name="defTra" onchange="dL(1)" class="defTra"></textarea></td><td><button type="button" id="addDefTra">初期列車を追加する</button></td></tr></tbody></table>
+<button type="button" onclick="dL(0)">初期列車読み込み</button></div>
+<!--ここまで-->
+<div class="inputTargetTra">
+<button type="button" id="pstBtn" onclick="pst(0)">貼り付けて読み込み</button>
+<textarea title="対象列車" oninput="rT(this.value,0);this.value=''" id="pstText"></textarea><button type="button" onclick="document.getElementById('pstText').value=''">クリア</button><button type="button" onclick="rT(document.getElementById('pstText').value,0);document.getElementById('pstText').value=''">読み込み</button><input type="checkbox" id="rtMode" title="途中の列に追加">
+<br>
+<div style="display:block"><button title="自動読み込み(1秒間隔)" id="autoLoading">自動読み込み</button><button id="stopAutoLoading" title="自動読み込みを停止">自動読み込み停止</button></div>
+<div id="detailLoad">ほかの路線(表外の路線)への分岐駅または表の終了駅を通過する列車
+<table id="detailLoadTable"><tr><td><span>列車名(一部でも可):</span><input class="passTra" placeholder="列車名(一部でも可)">は
+<input class="passSta" list="staList" placeholder="駅名">駅(通過)で<select class="passOption"><option value="0">分岐</option><option value="1">合流</option></select></div></td><td><button onclick="addPassTra()" id="addPassTra">列車を追加</button></td></tr></table>
+<div>「ほかの線区を経由」を表示する区間
+<br>
+<table id="detailLoadTable2"><tr><td><input list="staList" title="開始駅" placeholder="開始駅" class="outStSta">
+<input list="staList" title="終了駅" placeholder="終了駅" class="outEnSta">
+</td><td><button onclick="addOutTra()">区間を追加</button></td></tr></table>
+設定した区間内の途中駅にすべて停車しない列車はその区間を通らないとし、途中駅の表示が<span style="font-family:DiaPro">|</span>(ほかの線区を経由)になります。
+<br><span style="display:none;">※途中駅だけでなく区間の終わりの駅も「ほかの線区を経由」の表示にする場合は、区間の終わりの駅より一つ下に表示されている駅を終了駅にしてください。</span>
+</div>
+<div style="display:block;">列車順序の基準駅(デフォルト:開始駅)<input type="text" title="基準駅" id="desSta" list="staList">
+<br>※基準駅を通過する列車は、基準駅の直後の停車駅が基準駅になります。<br>基準駅より後に停車駅がない場合、基準駅の直前の停車駅が基準になります。</div>
+</div>
+<button title="HTML表データを貼り付けて読み込み" id="pasteHTML">HTML表データを貼り付けて読み込み</button><br>
+<textarea id="checkRawText"></textarea><button id="addTraBtn" onclick="addTra(document.getElementById('checkRawText').value,2)">読み込まれていない列車を確認・読み込み</button><button id="stopAutoLoading2">読み込み停止</button><button onclick="document.getElementById('checkRawText').value=''" title="">クリア</button>
+<input id="unloadTra" style="width:100%" readonly placeholder="読み込まれていない列車の時刻が表示されます">
+<br>
+<!--ここから-->
+<div style="display:none">
+<input title="入れ替える列" min="1" class="exchange" type="number">列目と<input title="入れ替える列" min="1" class="exchange" type="number">列目を<button type="button" onclick="doExchange()">入れ替え</button>
+<br>
+<input title="入れ替える列" min="1" class="exchange2" type="number">列目が<input title="入れ替え後の列" min="1" class="exchange2" type="number">列目になるように<button type="button" onclick="doExchange2()">入れ替え</button>
+<br>
+<input title="削除する列" min="1" type="number" id="deleteTarget">列目を<button onclick="deleteOne(-1,0)" type="button" title="1列削除">削除</button>
+</div>
+<!--ここまで-->
+<button id="validEdition">編集モード</button>
+ <div style="display:none" id="edit-mode-buttons">
+        <button id="none" class="edit-mode-button active">なし</button>
+        <button id="swap" class="edit-mode-button">入替</button>
+        <button id="move" class="edit-mode-button">移動</button>
+        <button id="delete" class="edit-mode-button">削除</button>
+    </div>
+<div><input title="行" id="row1" type="number" min="1" onchange="if(!isNaN(this.value)){document.getElementById('row2').value=this.value}">行<input title="列" id="column1" type="number" min="1">列目から<input title="行" id="row2" type="number" min="1">行<input title="列" id="column2" type="number" min="1">列目を<input style="font-family: DiaPro" list="index" id="afterText" title="変更後のテキスト">に<button id="replaceBtn">変更</button></div>
+<datalist id="index"><option value="↓">通過</option><option value="|">ほかの線区を経由</option><option value="‥">空欄</option></datalist>
+<button onclick="setFilter()">フィルター</button>
+<div id="filterBtnField"></div>
+<button id="subtitleBtn">駅名の(都道府県名)などの表示を削除</button><span>※すべての列車の時刻の読み込みを終えてから押してください。</span>
+<div id="styleBtnField"></div>
+<br><br><button id="deleteAll" type="button" title="表を削除">表を削除</button>
+<button id="undo">元に戻す</button>
+<button id="print" type="button" title="別ウィンドウで開く">別ウィンドウで開く</button>
+<!--<button onclick="addGuide()">表の列が何列目か表示されるようにする</button>-->
+<input id="fileName" placeholder="時刻表の名称(路線名、上り下り、平日/土曜・休日 など)"><span>印刷・PDF出力ファイルに記載されます</span>
+<br><button id="copyHTMLBtn">HTML表データをコピー</button><label><input type="checkbox" id="emitFstFnl">ダイヤグラム作成用の仕様でコピー</label>
+<div id="saveSettingsBtnField"><button id="saveSettings">入力内容を保存</button><span>シークレットモード、プライベートモードなどではウィンドウを閉じると保存内容が削除されます。</span></div>
+<div id="loadSavedSettingsBtnField"><button id="loadSavedSettings">保存内容を読み込み</button></div>
+</div>
+<div id="result" style="display:none"></div>
+<script>//location.replace('./エラー.html');
+/*Copyright 2024 Yabu*/
+var grvr;//実験用のグローバル関数(consoleで扱えるようにするため)
+window.onbeforeunload=function(e){e.preventDefault(); e.returnValue='check';}
+var $=(s)=>{return document.querySelector(s)}
+var $a=(s)=>{return document.querySelectorAll(s)}
+var $c=(s)=>{return document.createElement(s)}
+var pasted='';
+var tableHTML=[];
+function pst(mode){try{navigator.clipboard.readText().then((t)=>{if(t!=pasted){rT(t,mode);pasted=t;}})}catch(e){$('#pstBtn').disabled='disabled'}}
+//複数の列車の情報があるときは自動的に分割
+async function rT(rt, mode) {
+  const rtAr = rt.split('#');
+
+  for (let i = 0; i < rtAr.length; i++) {
+    if (rtAr[i].length > 0) {
+      if (rtAr[i].slice(0, 1) === ',') {
+        rtAr[i] = rtAr[i].replace(',', '');
+      }
+      
+      // Promise を使って非同期処理のようにラップする
+      await new Promise((resolve) => {
+        rT0(rtAr[i], mode);
+        resolve(); // rT0が完了した後にresolveを呼び出す
+      });
+    }
+  }
+}
+
+
+                     
+//ここから本体
+ /*var traNum=0; */
+function rT0(rt,mode){
+tableHTML.push($('#result').innerHTML);
+　  $('#undo').removeAttribute('disabled');
+/*if($('.traNameTr')!=null){traNum=$a('.traNameTd').length}*/
+if($('#rtMode').checked){mode=1}
+ //まず駅名とかがあらかじめ読み込まれているか確認
+var stNameTag=$a('.stName');
+var stNameArTag=$a('.stNameAr');
+if(stNameTag.length==0){dL()}
+var arr=rt.split(',');
+var arrStName=[];//Yahoo側
+var stName=[];//defTra側
+var stNameAr=[];//defTra側
+var deTimeTdList=[];
+var stanSta=null; var passSta1=$a('.passSta'); var traNum2=arr[arr.length-1].slice(arr[arr.length-1].indexOf('//')+2,arr[arr.length-1].length);//列車の検索番号
+ /*通過駅での分岐・合流のプログラムここから移動*/
+                                   
+var outStSta=[]; var outEnSta=[]; var outSec=-1;//「他線区を経由」用
+var outStStaInp=$a('.outStSta'); var outEnStaInp=$a('.outEnSta');
+for (var i=0;i<outStStaInp.length;i++){if(outStStaInp[i].value.length*outEnStaInp[i].value.length>0){outStSta.push(outStStaInp[i].value);outEnSta.push(outEnStaInp[i].value)}}
+
+for (var i=0;i<arr.length-1;i++){arrStName.push(arr[i].slice(0,arr[i].indexOf('/')))};//arrStName:Yahoo側の駅名リスト(当該列車の停車駅リスト)
+for(var i=0;i<stNameTag.length;i++){stName.push(stNameTag[i].innerText)};//stName:表上の駅名リスト
+for(var i=0;i<stNameArTag.length;i++){stNameAr.push(stNameArTag[i].innerText)};//着時刻表示駅の駅名リスト
+    //通過か、手前どまりか、判断保留用 ：表上にあるが停車駅ではない最初の駅をnonExistStaで保持。
+    var nonExistSta=-1; var isFirstRegion=true;
+    
+    
+      //途中駅始発・合流列車の追加  デフォルトでは当該列車の始発駅または合流駅を基準駅とする
+       var addedTraNum=0; var startSta=0; var desSta=$('#desSta').value;//startSta:基準駅が当該列車の停車駅リストの何番目か stanSta:基準駅の名前 stanStaNum:基準駅が表上の駅名リストの何番目か
+       if((desSta.length>0)&&(arrStName.includes(desSta))&&(stName.includes(desSta))){startSta=arrStName.indexOf(desSta)}else{
+       //無限にならない範囲内で、当該列車の停車駅のstartSta番目が表上出てきてかつ基準(その駅に停車する列車またはその駅が終着駅の列車)が1本以上存在するまでループ
+        while(startSta<=arrStName.length){
+        var stanStaNum=stName.indexOf(arrStName[startSta]);
+        if(stanStaNum>-1){if(/\b\d{3,4}<\/td>/g.test($a('.mainTr')[stanStaNum].innerHTML)){break;}}
+        startSta++;
+        }
+        if(startSta==arrStName.length){mode=0;};//結局基準駅にできる駅がなかった場合:仕方ないので一番最後に挿入
+        }
+                
+     if(mode==1){
+        stanSta=arrStName[startSta];var stanStaNum=stName.indexOf(stanSta);
+        var stanStaTr=$a('.mainTr')[stanStaNum]; var stanStaNumAr=-1;  var stanStaTrAr=[]; var tds2=[];
+        if(stNameAr.includes(stanSta)){stanStaNumAr=stNameAr.indexOf(stanSta);stanStaTrAr=$a('.mainTrAr')[stanStaNumAr];
+        tds2=stanStaTrAr.querySelectorAll('.time')};//基準駅が到着時刻表示駅の場合、その駅終着・分岐列車の到着時刻も基準に追加
+        if(typeof(stanStaTr)=='undefined'){console.log('エラー');console.log(['stanSta:'+stanSta,'stanStaNum:'+stanStaNum])}
+        var tds=stanStaTr.querySelectorAll('.time');//tds:基準駅の発車時刻のセルリスト。tds2:(基準駅が着時刻表示駅の場合のみ)基準駅終着列車の到着時刻のセルリスト
+        var times2=[];//times2: 基準駅に停車する列車の時刻(基準となる時刻)と、その時刻の列車が何列目かのリスト。基準駅が着時刻表示駅なら基準駅終着列車の着時刻とそれが何列目かも混在
+       
+	       for (var i=0;i<tds.length;i++){
+	       if(/^[0-9]+$/.test(tds[i].innerText)){times2.push([Number(z24(tds[i].innerText)),i])};
+	                                     }
+	       for (var i=0;i<tds2.length;i++){
+	         if(stNameAr.includes(stanSta)&&(/^[0-9]+$/.test(tds2[i].innerText))&&($a('.mainTr')[stanStaNum+1].querySelectorAll('.time')[i].innerText=='‥')){
+	            times2.push([Number(z24(tds2[i].innerText)),i]);
+	           } 
+	       								  }
+                                     
+       var times=times2;//times: times2を、時刻順に並べ替え
+       times.sort((a,b)=>{return a[0]-b[0]});
+       var tarTradepTime=arr[startSta].slice(arr[startSta].lastIndexOf('/')+1,arr[startSta].length);
+       
+       //挿入する列車の基準時刻
+       var tarTraTime=0; var insertMode=0;//発時刻基準で挿入するか着時刻基準で挿入するか。前者の場合は挿入列車をひとつ前の基準列車の次の列へ、後者は一つ後の基準列車の前の列へ
+       if(tarTradepTime.length>0){
+       tarTraTime=Number(z24(arr[startSta].slice(arr[startSta].lastIndexOf('/')+1,arr[startSta].length)));//基準駅の発時刻があれば発時刻を採用
+       }else{tarTraTime=Number(z24(arr[startSta].slice(arr[startSta].indexOf('/')+1,arr[startSta].lastIndexOf('/')))); insertMode=1;/*なければ着時刻を採用*/}
+       
+       var ind=0;
+       while((times[ind][0]<tarTraTime)&&(ind<times.length-1)){ind++};//ind-1番目とind番目の間に挿入列車の時刻がある。すなわちtimes[ind]:挿入列車の次の列車の[時刻,何列目か]
+       
+       //後ろから抜かしている列車があれば、それよりも後ろになるようにする(挿入列車の2つ以上前の時刻の列車が後ろにあればその列車よりも後ろに挿入されるように修正)
+              times2.sort((a,b)=>{return a[1]-b[1]});//times2は、列順になる([基準駅停車/終着列車の時刻,何列目か])
+       if(times2.indexOf(times[ind])+1<times2.length){
+	       while ((times2[times2.indexOf(times[ind])][0]>times2[times2.indexOf(times[ind])+1][0])&&(ind<times.length-1)){ind++}
+	       //while ((tarTraTime>times2[times2.indexOf(times[ind])+1][0])&&(ind<times.length-1)){ind++}
+                                                     }
+                                                     
+        if(ind>0){ if(insertMode==0){ addedTraNum=times[ind-1][1]+1;}else{ addedTraNum=times[ind][1];}}else{addedTraNum=0};
+        if(addedTraNum==times.length){mode=0} //結局一番後ろに挿入するとき
+        //当該列車始発駅を通過する列車との順番比較
+        /*var passes=[];
+        for (var i=addedTraNum;i<tds.length;i++){if(tds[i].innerText=='↓'){passes.push(i)}}
+        for (var i=0;i<passes.length;i++){ var mtr=$a('.mainTr'); var stopList=[];
+        for (var j=stanStaNum;j<stName.length;j++){
+         if(/^[0-9]+$/.test(mtr[j].querySelectorAll('.time')[i].innerText)){stopList.push(stName[j])}
+                                                  }
+                var ind=0; while(!(arrStName.includes(stopList[ind]))){ind++}
+           var stanSta2=ind; if(Number(z24(mtr[stanSta2].querySelectorAll('.time')[i].innerText))<Number(arr[startSta].slice(arr[startSta].lastIndexOf('/')+1,arr[startSta].length))){addedTraNum=i+1}
+                                         }*/
+                  };//mode==1の場合(挿入の場合)ここまで
+
+//通過駅での分岐・合流
+for (var i=0;i<passSta1.length;i++){
+var passSta=$a('.passSta')[i].value; var passTra=$a('.passTra')[i].value.split(',');
+if(passSta.length*passTra[0].length>0){
+ for(var j=0;j<passTra.length;j++){
+if(arr[arr.length-1].includes(passTra[j])){ 
+if($a('.passOption')[i].value==0){arr.splice(arr.length-3,0,passSta+'/↓/↓')}else{arr.splice(1,0,passSta+'/↓/↓')}
+                                                                              }
+                                  }
+                                      }
+                                   }
+
+  var hasEnded=false;//終着駅の後の「他線区経由区間」が'‥'になるように
+  for (var i=0;i<stName.length;i++){
+  var td=$c('td');td.classList.add('time'); deTimeTdList.push(td); td.setAttribute('traNum2',traNum2);
+  if(outSec==-1){if(!(isFirstRegion)){outSec=outStSta.indexOf(stName[i])}}else if((i>0)&&(outEnSta.includes(stName[i-1]))){outSec=-1};//「他線区を経由」
+  //時刻表側の駅が、その列車の停車駅リスト(Yahoo側)に含まれるか
+  var wnStop=arrStName.lastIndexOf(stName[i]); var wnStop2=arrStName.indexOf(stName[i]);
+   //同じ駅を2回以上通る場合で、1回目から2回目までの間の駅にその先のdefTra側の駅が含まれれば、1回目を採用。それ以外は、最後を採用。
+   if(wnStop2!=wnStop){var sliced=arrStName.slice(wnStop2+1,arrStName.indexOf(stName[i],wnStop2+1)-1);
+   var stName3=stName.slice(i+1,stName.length);
+    if(sliced.some(item => stName3.includes(item))){wnStop=wnStop2;}
+                      }
+  if(wnStop>-1){
+  //停車駅なら
+  var data=arr[wnStop];//当該停車駅の駅名、着時刻、発時刻
+  var arTime=data.slice(data.indexOf('/')+1,data.lastIndexOf('/'));//着時刻
+  var deTime=data.slice(data.lastIndexOf('/')+1,data.length);//発時刻
+  var endBar=false;//終着駅の次の駅はバー
+  var endBar2='';
+  if(deTime!=''){td.innerText=deTime;if(i==stName.length-1){td.innerText=arTime}}else{if(stNameAr.includes(stName[i])){td.innerText='‥'}else{td.innerText=arTime;endBar=true;}}//とりあえず、原則発時刻で発時刻なしなら着時刻
+
+   if(nonExistSta>-1){
+     for(j=nonExistSta;j<i;j++){deTimeTdList[j].innerText='↓'}; nonExistSta=-1;
+                     }
+   isFirstRegion=false;
+               }else{
+               if((outSec>-1)&&(!(hasEnded))){td.innerText='|'}else{
+               //上：ほかの線区を経由でないか.下：終着駅の次でも、終着駅が着時刻表示駅ならエンドバー不要
+               if(endBar){hasEnded=true;if(!(stNameAr.includes(stName[i]))){td.innerText='▔';endBar=false;}else{td.innerText='‥'; outSec=-1; endBar=false;endBar2=stName[i]}}else{td.innerText='‥'; outSec=-1; if(!(isFirstRegion)){hasEnded=true;}};if((nonExistSta==-1)&&(!isFirstRegion)){nonExistSta=i;}
+                                                                   }
+                    }
+               if(mode==0){$a('.mainTr')[i].appendChild(td);}else{$a('.mainTr')[i].insertBefore(td,$a('.mainTr')[i].querySelectorAll('.time')[addedTraNum])}
+                                   }
+           //着時刻
+           for(var i=0;i<stNameAr.length;i++){
+             var td=$c('td');td.classList.add('time'); var stNameOfStNameAr=stName.indexOf(stNameAr[i]);//発時刻と紐づけ
+              td.setAttribute('traNum2',traNum2);
+             /*if(stNameOfStNameAr>-1){td.id='timeTra'+traNum+'de'+stNameOfStNameAr}*/
+             var wnStop=arrStName.lastIndexOf(stNameAr[i]); var wnStop2=arrStName.indexOf(stNameAr[i]);
+          //同じ駅を2回以上通る場合で、1回目から2回目までの間の駅にdefTra側の駅が含まれれば、1回目を採用。それ以外は、最後を採用。
+           if(wnStop2!=wnStop){var sliced=arrStName.slice(wnStop2+1,arrStName.indexOf(stNameAr[i],wnStop2+1)-1);
+              var stName3=stNameAr.slice(i+1,stName.length);
+            if(sliced.some(item => stName3.includes(item))){wnStop=wnStop2}
+                              }
+           if(wnStop>-1){
+             var data=arr[wnStop];//当該停車駅の駅名、着時刻、発時刻
+             var arTime=data.slice(data.indexOf('/')+1,data.lastIndexOf('/'));//着時刻
+             if(arTime==''){arTime='‥'}
+             td.innerText=arTime;
+                        }else{if(stNameAr[i]==endBar2){td.innerText='▔';endBar2='';}else{td.innerText=deTimeTdList[stNameOfStNameAr].innerText;}}
+               if(mode==0){$a('.mainTrAr')[i].appendChild(td);}else{$a('.mainTrAr')[i].insertBefore(td,$a('.mainTrAr')[i].querySelectorAll('.time')[addedTraNum])}
+                                             }
+
+   //列車名
+   var traNameTd=$c('td'); traNameTd.classList.add('traNameTd'); traNameTd.innerText=arr[arr.length-1].slice(0,arr[arr.length-1].indexOf('//'));
+  if(mode==0){ $('.traNameTr').appendChild(traNameTd);}else{$('.traNameTr').insertBefore(traNameTd,$a('.traNameTd')[addedTraNum])}
+   //終着
+   var fnlSta=$c('td'); fnlSta.style.borderRight='1px solid #000'; fnlSta.style.textAlign='center'; fnlSta.classList.add('fnlStaTd');
+   if(!(stName.includes(arrStName[arrStName.length-1]))){
+     var data=arr[arr.length-2]; var fontSizeS=''; if(arrStName[arrStName.length-1].length>=4){fontSizeS='font-size: smaller'}
+     fnlSta.innerHTML='<span style="font-family:sans-serif;'+fontSizeS+'">'+arrStName[arrStName.length-1]+'</span><br>'+data.slice(data.indexOf('/')+1,data.lastIndexOf('/'));
+                                                        }                                                        
+   if(mode==0){$('.fnlTr').appendChild(fnlSta);}else{$('.fnlTr').insertBefore(fnlSta,$a('.fnlStaTd')[addedTraNum])}
+    //始発
+  var fstSta=$c('td'); fstSta.style.borderRight='1px solid #000'; fstSta.style.textAlign='center'; fstSta.classList.add('fstStaTd');
+     if(!(stName.includes(arrStName[0]))){
+     var data=arr[0];/*「始発駅//発時刻」*/ var fontSizeS=''; if(arrStName[0].length>=4){fontSizeS='font-size: smaller'}
+     console.log(data);
+     fstSta.innerHTML='<span style="font-family:sans-serif;'+fontSizeS+'">'+arrStName[0]+'</span><br>'+data.slice(data.indexOf('/')+2,data.length);
+                                         } 
+      if(mode==0){$('.fstTr').appendChild(fstSta);}else{$('.fstTr').insertBefore(fstSta,$a('.fstStaTd')[addedTraNum])}
+      /*traNum+=1;*/
+  if(mode==0){$('#result').scrollTo($('#mainTbl').clientWidth,0);}
+                      }//rT0ここまで
+                     
+   //途中駅始発列車を挿入
+   function addTra(rt,mode){
+   var arr=rt.split(','); var arrTimes=[];
+   for (var i=0;i<arr.length-1;i++){arrTimes.push(arr[i].split('/')[0]);}
+   var staList=arr.slice(0,arr.length);
+   var sn=$a('.stName'); var mt=null; var tl1=[]; var arrL=arr[arr.length-1];
+   for (var i=0;i<sn.length;i++){
+   if(sn[i].innerText==arrL.slice(0,arrL.lastIndexOf('['))){mt=sn[i].parentNode;}
+     							}
+   var times=mt.querySelectorAll('.time');
+   for (var i=0;i<times.length;i++){
+    if((/^[0-9]+$/.test(times[i].innerText))){tl1.push(times[i].getAttribute('traNum2'))}
+            					   }; 
+    var arr2=arr.filter(item => !tl1.includes(item.split('/')[1]));//同じ番号の列車が読み込まれているか
+     //traNum2が異なっても、行先・種別・時刻すべてが同じであれば同じ列車(すでに読み込まれている)とみなすようにしたい  
+    //ここまで
+    var arrTimes2=[]; var arrNums2=[];
+      for (var i=0;i<arr2.length;i++){
+       arrTimes2.push(arr2[i].split('/')[0]);
+       arrNums2.push(arr2[i].split('/')[1]);
+                                     }
+     if(mode!=2){ 
+     if(mode==1){ $('#unloadTra').value=arrTimes2.toString();}
+     var array=new Array();
+      var ind=0;
+      array.push(setInterval(function(){
+      if(ind<arr2.length){
+      var url1=arrL.slice(arrL.lastIndexOf('[')+1,arrL.length-1);
+      var url=url1.slice(0,url1.indexOf('?'))+'/'+arrNums2[ind]+url1.slice(url1.indexOf('?'),url1.indexOf('&mode'))+'&hh='+arrTimes2[ind].slice(0,arrTimes2[ind].length-2)+'&mm='+arrTimes2[ind].slice(arrTimes2[ind].length-2,arrTimes2[ind].length+1);
+      window.open(url,"コピー中","width=10,height=10"); ind++;
+                         }else{clearInterval(array.shift())}
+                                       },3000));
+     $('#stopAutoLoading2').addEventListener('click',function(){if(array.length>0){clearInterval(array.shift())}},false);
+                }else{
+                if((arrNums2.length>0)&&(arrNums2[0].length>0)){
+                var arrNums2List=arrNums2.toString();  $('#unloadTra').value=arrTimes2.toString();
+                while(arrNums2List.indexOf(',')>-1){arrNums2List=arrNums2List.replace(',','a')};//文字数削減のためコンマではなくaに。
+                window.open(arrL.slice(arrL.lastIndexOf('[')+1,arrL.length-1).replace('&mode=1','&mode=2&target='+arrNums2List));
+                                                               }else{$('#unloadTra').value='読み込まれていない列車はありません'}
+                     }
+                           }
+
+//駅名などの読み込み
+function dL(mode){
+tableHTML.push($('#result').innerHTML);
+　  $('#undo').removeAttribute('disabled');
+if($('#mainTbl')==null){
+  var tbl=$c('table'); tbl.style.borderCollapse='collapse'; tbl.id="mainTbl"; $('#result').style.display='block';
+  $('#result').appendChild(tbl);
+                       }
+ var stSta=$('#stSta').value; var enSta=$('#enSta').value; var defTraA1=$a('.defTra'); var defTraA=[];
+ for(var i=0;i<defTraA1.length;i++){if(defTraA1[i].value!=''){defTraA.push(defTraA1[i])}}//空欄の初期列車欄は省く
+ if(defTraA.length==0){defTraA[0]=$('#pstText')}
+//初期列車の情報を統合
+var allSt=[];
+for (var i=0;i<defTraA.length;i++){
+ var el=defTraA[i].value.split(',');el.pop();
+ for(var j=0;j<el.length;j++){el[j]=el[j].slice(0,el[j].indexOf('/'))} /*elは追加する駅名リスト*/
+allSt=mergeArrays(allSt,el);
+}
+const staList=$('#staList');
+//始発駅から終着駅までに絞る
+var stStaNum=0;var enStaNum=0;//enは後ろから
+if(allSt.indexOf(stSta)>-1){stStaNum=allSt.indexOf(stSta)}
+if(allSt.lastIndexOf(enSta)>-1){enStaNum=allSt.length-allSt.lastIndexOf(enSta)-1}
+for(var i=0;i<stStaNum;i++){allSt.shift()} for(var i=0;i<enStaNum;i++){allSt.pop()}
+
+//mode1は単なる取り除く範囲・着時刻表示駅の選択肢を表示する処理
+if(mode==1){
+			var bops=[$('#arTimeStaSelect'),$('#elimSel'),staList];
+			bops.forEach(bop=>{
+			 cln=bop.cloneNode(); bop.parentNode.replaceChild(cln,bop);
+	/*		 allSt.forEach(s=>{ var op=$c('option');op.innerText=s; bop.appendChild(op);}) */
+			});
+		    for (var i=0;i<allSt.length;i++){
+		    	var op=$c('option');op.innerText=allSt[i];var op1=$c('option');op1.innerText=allSt[i]; var op2=$c('option');op2.innerText=allSt[i];$('#staList').appendChild(op2); $('#arTimeStaSelect').appendChild(op1);
+		    	$('#elimSel').appendChild(op);
+		    	         }
+           }else{
+
+//着時刻表示駅
+var arTimeSta=$('#arTimeSta').value.split(',');
+//表への駅名の入力
+var mainTbl=$('#mainTbl');
+  var traNameTr=$c('tr'); traNameTr.classList.add('traNameTr'); traNameTr.appendChild($c('td')); mainTbl.appendChild(traNameTr);
+ for(var i=0;i<allSt.length;i++){
+  //着時刻表示駅
+  if(arTimeSta.includes(allSt[i])){var tr=$c('tr');tr.classList.add('mainTrAr');var td=$c('td');td.classList.add('stNameAr');tr.appendChild(td);td.innerText=allSt[i];mainTbl.appendChild(tr)}
+ var tr=$c('tr');tr.classList.add('mainTr'); var td=$c('td');td.classList.add('stName'); tr.appendChild(td); 
+td.innerText=allSt[i]
+ mainTbl.appendChild(tr);
+                                }
+      var fnlTr=$c('tr'); fnlTr.classList.add('fnlTr'); var fnlTd=$c('td'); fnlTd.innerText='終着'; fnlTd.style.position='sticky'; fnlTd.style.background='#fff'; fnlTd.style.borderRight='1px solid #000';　fnlTd.setAttribute('id','fnlTd');
+      fnlTd.style.left='0px'; fnlTd.style.top='0px';
+       fnlTr.appendChild(fnlTd); mainTbl.appendChild(fnlTr);
+             var fstTr=$c('tr'); fstTr.classList.add('fstTr'); fstTr.style.borderBottom='1px solid #000'; var fstTd=$c('td'); fstTd.innerText='始発'; fstTd.style.position='sticky'; fstTd.style.background='#fff'; fstTd.style.borderRight='1px solid #000'; fstTd.setAttribute('id','fstTd');
+      fstTd.style.left='0px'; fstTd.style.top='0px';
+       fstTr.appendChild(fstTd); mainTbl.insertBefore(fstTr,$('.mainTr'));
+                }
+                 }//dLここまで
+function mergeArrays(array1, array2) {
+    // 1つ目の配列を新しい配列にコピー
+    const resultArray = [...array1];
+    var bet=-1;//途中挿入の2駅目以降 (ここでは合流駅より後の部分のみ。例えば、天満橋から淀屋橋に対する、中之島方面の駅)
+    var bet2=-1; var bet22=-1;
+ for (var i=0;(i<array1.length)&&(bet2==-1);i++){if(array2.includes(array1[i])){bet2=i;bet22=array2.indexOf(array1[i])}}
+    // 2つ目の配列を走査
+    for (var i=0;i<array2.length;i++) {
+      var item=array2[i];
+        // 1つ目の配列に含まれていない場合にのみ追加
+        if (!resultArray.includes(item)) {
+        if(bet==-1){
+           if((bet2>-1)&&(i<bet22)){resultArray.splice(bet2,0,item);bet2+=1; /*合流駅(例:天満橋)より手前(例:淀屋橋、北浜)なら、合流駅の一つ手前に挿入*/
+           }else{
+            resultArray.push(item);
+                }
+                   }else{resultArray.splice(bet+1,0,item);bet+=1}
+        }else{bet=resultArray.indexOf(item);}
+    }
+
+    return resultArray;
+}
+  function z24(text){if(text.slice(0,1)=='0'){return text.replace('0','24')}else if((text.slice(0,1)=='1')&&(text.length==3)){return text.replace('1','25')}else{return text}}
+
+//ここから画面上の操作
+//初期列車入力欄追加
+
+$('#addDefTra').addEventListener('click',()=>{
+var defTra2=$c('textarea'); defTra2.classList.add('defTra'); defTra2.setAttribute('title','初期列車'); defTra2.setAttribute('onchange','dL(1)');
+var defTraTd=$c('td'); defTraTd.appendChild(defTra2); 
+var defTraTr=$c('tr'); defTraTr.appendChild(defTraTd);
+$('#defTraForm').querySelector('tbody').appendChild(defTraTr);},false);
+ function elimSta(){
+ var elimedStas=[];
+ Array.from($('#elimSel').options).forEach(s=>{if(s.selected){elimedStas.push(s.innerText)}});
+ var defTraList=Array.from($a('.defTra'));
+ defTraList.forEach(s=>{
+ if(s.value.length>0){
+ var arr=s.value.split(',');//arrは['駅名/着時刻/発時刻','駅名/着時刻/発時刻']
+ arr=arr.filter(t=>{
+ var arr2=t.split('/');//arr2は[駅名,着時刻,発時刻]
+return !(elimedStas.includes(arr2[0]));
+ });
+ s.value=arr.toString();
+ dL(1);
+ }
+ });
+ }
+ function addPassTra(){
+ /*var td=$c('td'); var passTra2=$c('input'); passTra2.classList.add('passTra'); var passSta2=$c('input'); passSta2.classList.add('passSta'); var passOption2=$c('select');
+ var op1=$c('option'); op1.innerText='分岐'; op1.setAttribute('value',0); var op2=$c('option'); op2.innerText='合流'; op2.setAttribute('value',1);
+ passOption2.appendChild(op1);passOption2.appendChild(op2); td.innerHTML='<span>列車名(一部でも可):</span>'*/
+ $('#detailLoadTable').innerHTML+='<tr><td>'+$('#detailLoadTable').querySelector('td').innerHTML+'</td></tr>';
+                      }
+  function addOutTra(){
+   $('#detailLoadTable2').innerHTML+='<tr><td>'+$('#detailLoadTable2').querySelector('td').innerHTML+'</td></tr>';
+  }
+  $('#saveSettings').addEventListener('click',saveSettings,false);
+  
+  //設定の保存
+  function saveSettings(){ var ls=localStorage;
+ 	if(ls.getItem('valid')){
+ 	 var settings=['stSta','enSta','arTimeSta','desSta','checkRawText','fileName'];//id
+ 	 var settings2=['defTra','passTra','passSta','passOption'];//className
+ 	settings=settings.map(id=>{return ['#'+id, $('#'+id).value]});
+ 	settings2=settings2.map(cn=>{ var elList=$a('.'+cn); var res=''; elList.forEach(el=>res+='|'+el.value); return ['.'+cn, res.slice(1,res.length)]});
+ 	var settings3=[['#rtMode',$('#rtMode').checked]];
+ 	console.log(settings); console.log(settings2); console.log(settings3);
+ 	var savedStr='';
+ 	var combinedArr=settings.concat(settings2).concat(settings3); console.log(combinedArr);
+ 	combinedArr.forEach(prop=>{savedStr+=(prop[0]+'='+prop[1]+'&')}); savedStr=savedStr.slice(0,savedStr.length-1);
+ 	console.log(savedStr);
+ 	if(ls.getItem('ttcpSaving')){ls.removeItem('ttcpSaving')};//ひとまず、設定は上書きする
+ 	ls.setItem('ttcpSaving',savedStr)
+ 	}
+  alert('保存しました');
+  }
+    function validLs(){
+    const ls=localStorage;
+  var isValid=ls.getItem('valid'); var isSaved=ls.getItem('ttcpSaving');
+	  if(!isValid){ls.setItem('valid', new Date().getTime()/1000); $('#saveSettingsBtnField').style.display='none';}else{
+	  $('#saveSettingsBtnField').style.display='block';
+	  }
+	  if(!isSaved){$('#loadSavedSettingsBtnField').style.display='none'}else{$('#loadSavedSettingsBtnField').style.display='block'}
+  }
+  window.addEventListener('load',validLs,false);
+  $('#loadSavedSettings').addEventListener('click',loadSavedSettings,false);
+  function loadSavedSettings(){
+ var savedArr=localStorage.getItem('ttcpSaving').split('&');
+ savedArr.forEach(prop=>{
+ var pn=prop.split('=')[0];
+ var targetEls=$a(pn);
+ var  vals=prop.split('=')[1].split('|');
+ vals.forEach((val,index)=>{
+  var targetEl=targetEls[index];
+   if(typeof(targetEl)!='undefined'){
+      if(targetEl.type!='checkbox'){targetEl.value=val}else{targetEl.checked=(val=='true')}
+                                    }else{
+                                    //入力欄が存在しない場合
+                                    }
+                                    dL(1);
+ });
+ });
+  }
+
+$('#deleteAll').onclick=()=>{if($('#mainTbl')!=null){if(confirm('表のすべてのデータ(駅名、すべての時刻)が削除されますがよろしいですか？')){$('#mainTbl').remove()}}}
+
+
+
+//HTML貼り付け
+ $('#pasteHTML').onclick=function(){try{navigator.clipboard.readText().then((t)=>{$('#result').innerHTML=t;$('#result').style.display='block';})}catch(e){$('#pstHTML').disabled='disabled'}}
+      //複数選択可能なフォームの作成
+      /*function csf(list,target,parent){
+      for (var i=0;i<list.length;i++){
+      var tv=target.value.split(',');
+      var div=$c('div'); div.innerText=list[i]; div.addEventListener('click',function(){
+      if(tv.includes(list[i])){target.value=tv.splice(tv.indexOf(list[i]),1).toString();div.style.background='#FFF';
+      }else{tv.push(list[i]);target.value=tv.toString();div.style.background='#EEE'}
+      
+      																				   },false);
+      																				   
+       								 }
+      parent.addEventListener('click',function(){});
+                                      }*/
+      function selectChange(sel,inp){
+      var op=sel.options; var sl=[];
+      for (var i=0;i<op.length;i++){if(op[i].selected){sl.push(op[i].value)}}
+      inp.value=sl.toString();
+                                    }
+
+ //別ウィンドウで開く
+ $('#print').addEventListener('click',function(){
+ var fileName=$('#fileName').value;
+ var printWindow=window.open('');
+ var scr=$c('script'); scr.innerHTML='        function showColumns(start,end) {             var table = document.getElementById("mainTbl");             var rowCount = table.rows.length;              for (var i = 0; i < rowCount; i++) {                 table.rows[i].cells[0].style.display = "";             }              for (var i = 0; i < rowCount; i++) {                 for (var j = 1; j < table.rows[i].cells.length; j++) {                     table.rows[i].cells[j].style.display = "none";                 }             }             for (var i = 0; i < rowCount; i++) {                 for (var j = start; j <= end; j++) {                     table.rows[i].cells[j].style.display = "";                 }             }                                          }';
+ printWindow.document.write('<head><link href="./時刻表style.css" rel="stylesheet"></link><title>'+fileName+'</title></head><body>'+$('#result').innerHTML+'</body>');
+ printWindow.document.body.appendChild(scr);
+  var numTra=$('.mainTr').querySelectorAll('.time').length;
+  var spn=(numTra-(numTra%20))/20+1;
+  var scSel=$c('select'); scSel.style.marginTop='1px'; var defa=$c('option'); defa.innerText='すべて表示'; scSel.appendChild(defa);
+  for (var i=0;i<spn;i++){
+  var end=20*(i+1); if(20*(i+1)>numTra){end=numTra}
+  var opt=$c('option'); opt.innerText=20*i+1+'-'+end;
+  scSel.appendChild(opt);
+                         }
+  /*scSel.addEventListener('change',function(){
+  if(scSel.selectedIndex==0){showColumns(0,numTra)}else{
+  var tt=scSel.options[scSel.selectedIndex].innerText;
+  showColumns(Number(tt.slice(0,tt.indexOf('-'))),Number(tt.slice(tt.indexOf('-'),tt.length)));
+                                                       }
+                                            },false);*/
+ printWindow.document.body.appendChild(scSel); /*printWindow.document.body.innerHTML+='<button onclick="print()">印刷またはPDFに保存</button>';*/
+  var pBtn=$c('button'); pBtn.innerText='印刷'; pBtn.id='pBtn'; printWindow.document.body.appendChild(pBtn);
+ var scr2=$c('script'); scr2.innerHTML="const scSel=document.querySelector('select'); const numTra=document.querySelector('.mainTr').querySelectorAll('.time').length; scSel.addEventListener('change',function(){ if(scSel.selectedIndex==0){showColumns(0,numTra)}else{ var tt=scSel.options[scSel.selectedIndex].innerText; showColumns(Number(tt.slice(0,tt.indexOf('-'))),Number(tt.slice(tt.indexOf('-')+1,tt.length)));var stn=document.querySelectorAll('.stName');for(var i=0;i<stn.length;i++){stn[i].style.position='relative'}; var stna=document.querySelectorAll('.stNameAr');for(var i=0;i<stna.length;i++){stna[i].style.position='relative'};var fnlTr=document.querySelector('.fnlTr');if(fnlTr!=null){fnlTr.querySelector('td').style.position='relative'} }},false);";
+ scr2.innerHTML+=" var originalTable = document.getElementById('mainTbl'); var columnsCount = originalTable.rows[0].cells.length; function createNewTable(startIndex, endIndex) { var newTable = document.createElement('table'); newTable.style.marginBottom='150px';  /* let totalHeight = 0;     var tableHeight = newTable.getBoundingClientRect().height;     totalHeight += tableHeight;     if (totalHeight > A4Height) {       var marginBottom = A4Height - (totalHeight - tableHeight);       newTable.style.marginBottom = `${marginBottom}px`;       totalHeight = tableHeight;     } else {       newTable.style.marginBottom = '150px';     };*/ var rowsCount = originalTable.rows.length;   for (var i = 0; i < rowsCount; i++) {  var newRow = newTable.insertRow(); newRow.classList.add(originalTable.rows[i].classList[0]);   var originalCell = originalTable.rows[i].cells[0];    var newCell = newRow.insertCell(); newCell.innerHTML = originalCell.innerHTML; if(originalCell.classList.length>0){ newCell.classList.add(originalCell.classList[0])};newCell.style.position='relative'; if((originalCell.innerText=='終着')||(originalCell.innerText=='始発')){newCell.style.borderRight='1px solid #000'}; for (var j = startIndex; j <= endIndex && j < columnsCount; j++) {  originalCell = originalTable.rows[i].cells[j]; newCell = newRow.insertCell(); newCell.innerHTML = originalCell.innerHTML;for (var k = 0; k < originalCell.attributes.length; k++) {  newCell.setAttribute(originalCell.attributes[k].name, originalCell.attributes[k].value);  }         }     } document.body.appendChild(newTable); }  function printTable(){ for (var startIndex = 1; startIndex < columnsCount; startIndex += 20) {     var endIndex = startIndex + 19;     createNewTable(startIndex, endIndex); } };";
+ scr2.innerHTML+="document.getElementById('pBtn').addEventListener('click',function(){printTable();document.getElementById('mainTbl').style.display='none'; document.getElementById('pBtn').style.display='none';document.querySelector('select').style.display='none';adjastMargin();print()},false);";
+ scr2.innerHTML+="var marginBottom=0;function adjastMargin(){ var newTables=document.querySelectorAll('table');  var A4Height = 1273; newTables.forEach(newTable=>{ var tableHeight=newTable.getBoundingClientRect().height; if(tableHeight>0){ var totalMargin=A4Height%tableHeight; var mNum=Math.floor(A4Height/tableHeight);if(marginBottom==0){if(A4Height>tableHeight){marginBottom=totalMargin/mNum}else{marginBottom=40}}; console.log(totalMargin); console.log(mNum); newTable.style.marginBottom=marginBottom+'px';}});}"
+ printWindow.document.body.appendChild(scr2);
+  var sty=$c('style'); sty.innerHTML="@font-face { 		font-family: DiaPro; 		src: url('../DiaProV1200/DiaPro-Regular.otf') format('opentype'), 		     url('../DiaProV1200/DiaPro-Regular.woff') format('woff'); 	} textarea{resize: none} table{ border: 1px solid #000; border-collapse:collapse; font-family: DiaPro; width: max-content; } #result{margin: 10px;width: auto; overflow: scroll;} .time{border-right: 1px solid #000;text-align: center;} .traNameTd{width: 45px; height: 40px; font-size: 14px;text-align: center;font-family: sans-serif;} .mainTrAr{border-bottom: 1px solid #111;} .stName{font-family: sans-serif;white-space: nowrap;position: sticky; top:0px; left: 0px;background: #fff;z-index:2;border-right: 1px solid #000} .stNameAr{font-family: sans-serif;white-space: nowrap;position: sticky; top:0px; left: 0px;background: #fff;z-index:2;border-right: 1px solid #000} #arTimeStaSelect{height: 120px} .fnlTr{border-top: 1px solid #000} .fstTr{border-bottom: 1px solid #000} .hiddenSta{display: none}";
+  printWindow.document.body.appendChild(sty);
+ printWindow.document.close();
+                                                },false);
+                                                
+   //自動読み込み
+   var autoLoadSetting=[];
+   $('#autoLoading').addEventListener('click',function(){autoLoadSetting.push(setInterval(function(){pst(0)},1000));},false);
+   $('#stopAutoLoading').addEventListener('click',function(){clearInterval(autoLoadSetting.shift())},false);
+    //元に戻す
+  /*  function undo(){$('#result').innerHTML=tableHTML;}*/
+    
+
+        function showColumns(start, end) {
+            var table = document.getElementById("mainTbl");
+            var rowCount = table.rows.length;
+
+            for (var i = 0; i < rowCount; i++) {
+                table.rows[i].cells[0].style.display = "";
+            }
+
+            for (var i = 0; i < rowCount; i++) {
+                for (var j = 1; j < table.rows[i].cells.length; j++) {
+                    table.rows[i].cells[j].style.display = "none";
+                }
+            }
+            for (var i = 0; i < rowCount; i++) {
+                for (var j = start; j <= end; j++) {
+                    table.rows[i].cells[j].style.display = "";
+                }
+            }
+                                         }
+         function addGuide(){
+          var traNameTd=$a('.traNameTd');
+          for(var i=0;i<traNameTd.length;i++){
+          traNameTd[i].addEventListener('mouseover',function(e){e.target.title=Array.from($a('.traNameTd')).indexOf(e.target)+1+'列目',false});
+                                             }                  
+                            }
+    // HTMLの表(id="mainTbl")のa行b列目からc行d列目までのinnerTextを指定したものに置き換える関数
+function replaceTableText(a, b, c, d) {
+　  tableHTML.push($('#result').innerHTML);
+　  $('#undo').removeAttribute('disabled');
+    // テーブルの要素を取得
+    var table = document.getElementById("mainTbl");
+    // テーブルが存在しない場合は処理を終了
+    if (!table) {
+        console.log("Table with id 'mainTbl' not found.");
+        return;
+    }
+    
+    // 行数と列数を取得
+    var rowCount = table.rows.length;
+    var colCount = table.rows[0].cells.length;
+    
+    // a行b列からc行d列までのセルを置き換える
+    for (var i = a; i <= c && i < rowCount; i++) {
+        for (var j = b; j <= d && j < colCount; j++) {
+            // 新しいテキストを取得
+            var newText = document.getElementById("afterText").value;
+            // 対象のセルのinnerTextを置き換える
+            table.rows[i].cells[j].innerText = newText;
+        }
+    }
+}
+
+// ボタンがクリックされた時に置き換える関数を呼び出す
+document.getElementById("replaceBtn").addEventListener("click", function() {
+    // inputからa,b,c,dの値を取得
+    var a = parseInt(document.getElementById("row1").value);
+    var b = parseInt(document.getElementById("column1").value);
+    var c = parseInt(document.getElementById("row2").value);
+    var d = parseInt(document.getElementById("column2").value);
+    // 関数を呼び出してHTMLの表を置き換える
+    replaceTableText(a, b, c, d);
+});
+
+      $('#copyHTMLBtn').addEventListener('click',function(){
+      if($('#emitFstFnl').checked){
+      var resultClone=$('#result').cloneNode(true);
+      if(resultClone.querySelector('.fstTr')){resultClone.querySelector('.fstTr').remove()};
+      if(resultClone.querySelector('.fnlTr')){resultClone.querySelector('.fnlTr').remove()};
+      //「発/着」の列を追加、「‥」を空欄化
+      var ttr=resultClone.querySelector('.traNameTr'); var mtr=resultClone.querySelectorAll('.mainTr'); var mtra=resultClone.querySelectorAll('.mainTrAr');
+      var rows2=[];
+      mtr.forEach(s=>rows2.push(s)); mtra.forEach(s=>rows2.push(s));//時刻の行だけ(後者の処理用)
+       var rows=[ttr].concat(rows2);//列車名の行も追加(前者の処理用)
+      rows.forEach(t=>{
+      var ntd=$c('td'); if(t.classList.contains('mainTr')){if(t!=mtr[mtr.length-1]){ntd.innerText='発'}else{ntd.innerText='着'}
+      }else if(t.classList.contains('mainTrAr')){ntd.innerText='着'};
+       t.insertBefore(ntd,t.firstChild.nextSibling);
+      });
+      rows2.forEach(tr=>{var tds=tr.querySelectorAll('.time'); tds.forEach(td=>{if(td.innerText=='‥'){td.innerText=''}})});
+      navigator.clipboard.writeText(resultClone.innerHTML);
+      }else{
+      navigator.clipboard.writeText($('#result').innerHTML)}},false);
+      
+      /*都道府県名などの削除*/
+      $('#subtitleBtn').addEventListener('click',function(){
+      const stName=$a('.stName'); const stNameAr=$a('.stNameAr'); const fst=$a('.fstStaTd'); const fnl=$a('.fnlStaTd');
+      for (var i=0;i<stName.length;i++){
+      stName[i].innerHTML=removeSubstring(stName[i].innerHTML);
+        }
+        for(var i=0;i<stNameAr.length;i++){
+        stNameAr[i].innerHTML=removeSubstring(stNameAr[i].innerHTML);      
+        }
+        for(var i=0;i<fst.length;i++){
+        fst[i].innerHTML=removeSubstring(fst[i].innerHTML);      
+        }
+        for(var i=0;i<fnl.length;i++){
+        fnl[i].innerHTML=removeSubstring(fnl[i].innerHTML);      
+        }
+      },false);
+      
+					      function removeSubstring(inputString) {
+					    // 正規表現パターン
+					    var regexPattern = /\((.+[都道府県線])|(.+[都道府県線]・.+)|(鉄道)\)$/;
+
+					    // 文字列が指定された条件に一致するかチェック
+					    if (regexPattern.test(inputString)) {
+					        // ()内の部分を削除して新しい文字列を返す
+					        return inputString.substring(0, inputString.indexOf("("))+inputString.substring(inputString.indexOf(")")+1,inputString.length);
+					    } else {
+					        // 条件に一致しない場合は元の文字列をそのまま返す
+					        return inputString;
+					    }
+					}
+					/*ここまで*/
+					/*スタイルを整える*/
+					if(CSS.supports('text-align-last','justify')){
+					const styleBtn=$c('button'); styleBtn.innerText='見た目を整える';
+					styleBtn.addEventListener('click',function(){
+					const stName=$a('.stName'); const stNameAr=$a('.stNameAr');
+					for (var i=0;i<stName.length;i++){var sti=stName[i];if(sti.innerText.length>1){sti.style.textAlignLast='justify';}else{sti.style.textAlignLast='center'};stName[i].style.fontFamily='monospace'; if((i==0)||(i==stName.length-1)){stName[i].style.fontWeight=900; stName[i].style.fontFamily='sans-serif'; stName[i].style.fontSize='12px'}}
+					for (var i=0;i<stNameAr.length;i++){var sti=stNameAr[i];if(sti.innerText.length>1){sti.style.textAlignLast='justify'}else{sti.style.textAlignLast='center'};
+					$('#fstTd').style.textAlignLast='justify'; $('#fstTd').style.fontFamily='monospace';
+                    $('#fnlTd').style.textAlignLast='justify'; $('#fnlTd').style.fontFamily='monospace';
+					stNameAr[i].setAttribute('rowspan',2); stNameAr[i].parentNode.nextElementSibling.children[0].classList.add('hiddenSta');//結合
+					stNameAr[i].style.fontWeight=900;
+					}
+					},false);
+					$('#styleBtnField').appendChild(styleBtn)}
+		
+		
+
+        //ここから編集モード
+        $('#validEdition').addEventListener('click',validEdition,false);
+        function validEdition(){
+        if($('#result').querySelector('table')!=null){$('#edit-mode-buttons').style.display='block'}
+        addGuide();
+    let selectedElement = null;
+    let editMode = 'none';
+    var traNameTds = Array.from(document.querySelectorAll('.traNameTd'));
+    var traNameTdsTemp=[traNameTds];//元に戻すように、保持
+    var mtr=$a('.mainTr');  var mtra=$a('.mainTrAr'); var fnltr=$('.fnlTr'); var fsttr=$('.fstTr');
+    function undo(){
+    traNameTds=traNameTdsTemp.pop();if(tableHTML.length>0){$('#result').innerHTML=tableHTML.pop();}else{$('#undo').disabled='disabled'};
+    resetSelection();resetHoverEffects();
+    var traNameTdList=$a('.traNameTd'); traNameTdList.forEach(s=>{var sc=s.classList; sc.remove('selected');sc.remove('hover-swap');sc.remove('hover-move-left');sc.remove('hover-move-right')});
+                   }
+    $('#undo').addEventListener('click',undo,false);
+
+    // 編集モードボタンの設定
+    document.querySelectorAll('.edit-mode-button').forEach(button => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('.edit-mode-button').forEach(btn => btn.classList.remove('active'));
+            button.classList.add('active');
+            editMode = button.id;
+            resetSelection();
+        });
+    });
+
+    // 各traNameTd要素にクリックイベントを設定
+    traNameTds.forEach(td => {
+        td.addEventListener('click', () => { console.log(traNameTds.indexOf(td)); console.log(traNameTds);
+            if (editMode === 'none') return;
+
+            if (td.classList.contains('selected')) {
+                td.classList.remove('selected');
+                selectedElement = null;
+                resetHoverEffects();
+            } else {
+                if (editMode === 'delete') {
+                    deleteOne(traNameTds.indexOf(td));
+                    td.classList.remove('selected');
+                } else {
+                    if (selectedElement) { console.log(selectedElement);
+                        if (editMode === 'swap') {
+                            doExchange(traNameTds.indexOf(selectedElement), traNameTds.indexOf(td));
+                            resetSelection();
+                            
+                        } else if (editMode === 'move') {
+                            doExchange2(traNameTds.indexOf(selectedElement), traNameTds.indexOf(td));
+                            resetSelection();
+                        }
+                    } else {
+                        td.classList.add('selected');
+                        selectedElement = td;
+                        addHoverEffects(td);
+                    }
+                }
+            }
+        });
+    });
+
+    function resetSelection() {
+        traNameTds.forEach(td => td.classList.remove('selected'));
+        selectedElement = null;
+        resetHoverEffects();
+    }
+
+    function resetHoverEffects() {
+        traNameTds.forEach(td => {
+            td.classList.remove('hover-swap');
+            td.classList.remove('hover-move-left');
+            td.classList.remove('hover-move-right');
+        });
+    }
+
+    function addHoverEffects(selected) {
+        traNameTds.forEach(td => {
+            if (td !== selected) {
+                td.addEventListener('mouseenter', handleMouseEnter);
+                td.addEventListener('mouseleave', handleMouseLeave);
+            }
+        });
+    }
+
+    function handleMouseEnter() {
+        if (!selectedElement) return;
+        const selectedIndex = traNameTds.indexOf(selectedElement);
+        const hoveredIndex = traNameTds.indexOf(this);
+        if (editMode === 'swap') {
+            this.classList.add('hover-swap');
+        } else if (editMode === 'move') {
+            if (hoveredIndex < selectedIndex) {
+                this.classList.add('hover-move-left');
+            } else {
+                this.classList.add('hover-move-right');
+            }
+        }
+    }
+
+    function handleMouseLeave() {
+        this.classList.remove('hover-swap');
+        this.classList.remove('hover-move-left');
+        this.classList.remove('hover-move-right');
+    }
+    function doExchange(ex1,ex2){
+    addGuide();
+    traNameTdsTemp.push(traNameTds);
+    tableHTML.push($('#result').innerHTML);
+    　  $('#undo').removeAttribute('disabled');
+            const temp = traNameTds[ex1].innerHTML;
+        traNameTds[ex1].innerHTML = traNameTds[ex2].innerHTML;
+        traNameTds[ex2].innerHTML = temp;//グローバルなtraNameTdsを変更(同時にtraNameTrの順序入れ替え)
+     var rows=new Array(fnltr,fsttr);//traNameTr以外のすべての列(tr)を格納
+     mtr.forEach(s=>{rows.push(s)}); mtra.forEach(s=>{rows.push(s)});
+     for(var i=0;i<rows.length;i++){
+      var targetTdList=rows[i].querySelectorAll('td');
+      const temp2 = targetTdList[ex1+1].innerHTML;
+      targetTdList[ex1+1].innerHTML = targetTdList[ex2+1].innerHTML
+      targetTdList[ex2+1].innerHTML = temp2
+     }
+    }
+    　　 function doExchange2(ex1,ex2){
+　　 addGuide();
+　　     traNameTdsTemp.push(traNameTds);
+    tableHTML.push($('#result').innerHTML);
+    　  $('#undo').removeAttribute('disabled');
+　　         const movingItem0 = traNameTds[ex1];
+        traNameTds.splice(ex1, 1);
+        traNameTds.splice(ex2, 0, movingItem0);
+        var parent = movingItem0.parentNode;
+        traNameTds.forEach(td => parent.appendChild(td));
+     var rows=new Array(fnltr,fsttr);
+     mtr.forEach(s=>{rows.push(s)}); mtra.forEach(s=>{rows.push(s)});
+     for (var i=0;i<rows.length;i++){
+     var targetTds=Array.from(rows[i].querySelectorAll('td'));
+     targetTds.shift();//凡例のtdは除く
+     var movingItem=targetTds[ex1];
+     targetTds.splice(ex1,1);
+     targetTds.splice(ex2,0,movingItem);
+     var parent=movingItem.parentNode;
+     targetTds.forEach(td=>{parent.appendChild(td)});
+     }
+　　 }
+　　 function deleteOne(ex1){
+　　 addGuide();
+　　     traNameTdsTemp.push(traNameTds);
+    tableHTML.push($('#result').innerHTML);
+    　  $('#undo').removeAttribute('disabled');
+        traNameTds[ex1].remove();//HTML要素として削除
+        traNameTds.splice(ex1, 1);//配列として削除
+     var rows=new Array(fnltr,fsttr);//traNameTr以外のすべての列(tr)を格納
+     mtr.forEach(s=>{rows.push(s)}); mtra.forEach(s=>{rows.push(s)});
+      for(var i=0;i<rows.length;i++){
+      var targetTdList=rows[i].querySelectorAll('td');
+      targetTdList[ex1+1].remove();//0列目は凡例なので
+     }
+　　 }
+    
+}
+
+//フィルター
+function setFilter(){
+const tnTd=$a('.traNameTd');
+const filterBtnField = $('#filterBtnField');
+var typeNum={};//種別名と何列目かの連想配列
+//n号を削除する関数
+function extractBeforeNumberGou(input) {
+  const regex = /(.*?)(\d+号)/;
+  const match = input.match(regex);
+  if (match) {
+    return match[1];
+  }else{return input}
+  }//ここまで
+for (var i=0;i<tnTd.length;i++){
+var typeExtractedName=extractBeforeNumberGou(tnTd[i].innerText);
+var numOfType=typeNum[typeExtractedName];
+if(typeof(numOfType)=='undefined'){typeNum[typeExtractedName]=[i]}else{
+
+typeNum[typeExtractedName].push(i);
+}
+}
+  console.log(typeNum); grvr=typeNum;
+var typeList=Object.keys(typeNum);//種別名のリスト
+    var mtr=$a('.mainTr');  var mtra=$a('.mainTrAr'); var fnltr=$('.fnlTr'); var fsttr=$('.fstTr'); var ttr=$('.traNameTr');
+    var rows=new Array(fnltr,fsttr,ttr);
+    mtr.forEach(td=>{rows.push(td)}); mtra.forEach(td=>{rows.push(td)});
+//すべて表示
+var allDisplayBtn=$c('button');
+allDisplayBtn.classList.add('filter-btn');
+allDisplayBtn.addEventListener('click',()=>{
+var hiddenTd=$a('.hidden');
+hiddenTd.forEach(td=>{td.classList.remove('hidden')});
+var activeBtn=$a('.filter-active');
+activeBtn.forEach(abtn=>{abtn.classList.remove('filter-active')});
+},false);
+allDisplayBtn.innerText='すべて表示';
+filterBtnField.appendChild(allDisplayBtn);
+
+typeList.forEach(s=>{
+var btn=$c('button'); btn.innerText=s; btn.classList.add('filter-btn');
+btn.addEventListener('click',()=>{
+btn.classList.toggle('filter-active');
+var numList=typeNum[s];//その種別である列車が何列目か
+numList.forEach(t=>{
+ rows.forEach(tr=>{tr.querySelectorAll('td')[t+1].classList.toggle('hidden')});//1列目は凡例なので、調整
+});
+
+},false);
+filterBtnField.appendChild(btn);
+});
+}//setFilterここまで
+</script>
+</body>
+</html>
