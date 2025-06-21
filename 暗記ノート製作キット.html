@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<head>
+<title>暗記ノート制作キット</title>
+<!--<link href="./EffectBtnJS.css" rel="stylesheet"></link>-->
+<meta charset="UTF-8">
+<style>
+#main{
+position: absolute;
+z-index: 1;
+}
+.explanation{
+display: inline-block;
+}
+.st{
+cursor: pointer;
+display:block;
+width: 240px;
+height: 40px;
+border-bottom: 1px solid #EEE;
+line-height: 40px;
+background: rgb(250,250,250);
+z-index: 2;
+position: relative;
+}
+.st:hover{
+box-shadow: 0px 2px 2px 0px #DDD;
+z-index: 4;
+}
+.st:active{
+background: rgb(240,240,240);
+transition: 0.3s;
+}
+#input{
+resize:none;
+}
+#list{
+position: absolute;
+z-index:5;
+transform:translateX(-50%) translateY(-50%);
+display:none;
+width: 600px;
+height: 400px;
+background: #fff;
+box-shadow: 2px 2px 2px 2px #CCC;
+}
+#buttons{
+position: absolute;
+transform: translateY(-50%);
+bottom: 0px;
+width: 100%;
+height: 20px;
+}
+#saveBtn{
+display:none;
+width: 124px;
+height: 39px;
+background: rgb(240,240,240);
+border-radius: 3px;
+cursor: pointer;
+font-size: 20px;
+line-height: 39px;
+text-align: center;
+box-shadow: 1px 1px 1px 1px #CCC;
+}
+#saveBtn:active{
+background: #BBB;
+transition: 0.4s;
+}
+.list-n-n{
+cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div id="main">
+  <div id="load"><div class="title">保存済みファイルを開く･編集する</div>
+   <label style="display:none"><div class="st">端末に保存したファイル</div><input type="file" style="display:none;"></label>
+   <div id="openList" class="st">このページで保存したファイル</div>
+   <div id="list">
+       <span id="fn">ファイル名:</span><input id="fileName">
+      <div id="list-n"></div>
+      <div id="buttons">
+      <button id="ok">開く</button><button onclick="document.getElementById('list').style.display='none'" id="cancel">キャンセル</button>
+      </div>
+   </div>
+  </div>
+ <div class="new">
+   <div class="title">新規作成</div>
+  <div class="explanation">文章を打ち込む</div>
+  <input class="modeSelect" min="0" max="1" step="1" name="mode" value="0" type="range"><div class="explanation">画像を元にして制作</div>
+ </div>
+ <div id="form">
+  <div class="mark">
+   隠す場所を囲う記号:<select id="mark"><option>()</option><option>[]</option><option>{}</option></select>
+  <div class="explanation2">指定した記号で囲った範囲が自動的に隠されます。</div>
+  </div>
+  <div class="buttons">
+    <button onclick="insertTag('div')">&lt;div&gt;</button>
+    <button onclick="insertTag('span')">&lt;span&gt;</button>
+    <button onclick="insertTag('p')">&lt;p&gt;</button>
+    <button onclick="insertTag('h5')">&lt;h5&gt;</button>
+    <button onclick="insertBr()">&lt;br&gt;</button>
+    <button onclick="insertTable()">表を挿入</button>
+</div>
+  <textarea id="input"></textarea>
+ </div>
+  <paper-button id="paper-button2"><div class="effectBtn" style="background: #50f255; color: #fff; width: 150px; height: 45px; border-radius: 5px; margin-bottom: 7px; font-weight: 600;position: relative; font-family:sans-serif;text-align:center" data-shadow-type="none" data-ring-bgcolor="rgb(150,253,186)" onclick="yMode1()"><div style="position:relative; top:7.5px">読み込み</div></div></paper-button>
+<div class="result">
+<iframe id="result"></iframe>
+</div>
+<div id="saveform"><div id="saveBtn">保存</div><div id="downloadBtn"></div>
+<div id="openBtn"></div>
+</div>
+</div>
+<script>
+var markS=document.getElementById('mark');
+//保存済みファイルリストの読み込み
+
+var savedFileName1=localStorage.getItem('savedFileName');
+var savedFileName;
+var listn=document.getElementById('list-n');
+var selectedFile=null;//選択されたファイル
+if(savedFileName1==null){savedFileName=null; listn.innerHTML='<div class="nofile">保存済みのファイルはありません</div>'}else{
+savedFileName=savedFileName1.split(',');
+for (var i=0;i<savedFileName.length;i++){
+//同じ名前のファイルが既に表示されていれば、再度表示しない
+if (listn.innerHTML.indexOf('<div class="list-n-n">'+savedFileName[i]+'</div>')==-1){
+listn.innerHTML+='<div class="list-n-n">'+savedFileName[i]+'</div>';
+                                                                                    }
+}
+}
+var loadedFile=null;//読み込まれた(作業中の)ファイル
+var listnn=document.getElementsByClassName('list-n-n');
+for (var i=0;i<listnn.length;i++){
+listnn[i].onclick=function(){
+if (this.getAttribute("selected")==null){ 
+selectedFile=this.innerHTML; this.style.background="#DDD";
+this.setAttribute("selected","selected");
+                        }else{this.style.background="#fff";selectedFile="";this.removeAttribute("selected");}
+}
+}
+var inputTag=document.getElementById('input');//入力欄
+var result=document.getElementById('result');
+//ファイルを開く
+var list=document.getElementById('list');
+var ok=document.getElementById('ok');
+ok.onclick = function(){
+if (selectedFile!=null){
+list.style.display="none";
+loadedFileData=localStorage.getItem(selectedFile);
+if (loadedFileData!=null){
+loadedFile=selectedFile;
+var sY1=decodeURIComponent(loadedFileData);
+var sY2=sY1.slice(0,sY1.indexOf('<script'));
+var s_markY1=localStorage.getItem(selectedFile+"mark");
+var s_markY=s_markY1.slice(0,1);
+var e_markY=s_markY1.slice(1,2);
+switch (s_markY){
+case "(": markS.options[0].selected="selected"; break;
+case "[": markS.options[1].selected="selected"; break;
+case "{": markS.options[2].selected="selected"; break;
+}
+var currentString=sY2;
+while(currentString.indexOf('<div class="hidden">')>-1){
+currentString=currentString.replace('<div class="hidden">',s_markY);
+}
+while (currentString.indexOf('</div>')>-1){
+currentString=currentString.replace('</div>',e_markY);
+}
+input.value=currentString;
+
+result.src="data:text/html;charset=UTF-8,"+loadedFileData;
+}
+                       }else{
+alert('開くファイルを選択してください。')
+                            }
+}
+var sourceJS='<'+'script>var hidden=document.getElementsByClassName("hidden"); for(var i=0;i<hidden.length;i++){hidden[i].onclick = function(){this.style.animation="0.5s 1 appearance"; var this1=this; setTimeout(function(){this1.style.color="black"},400)}}<'+'/script>';
+var sourceCSS='<'+'style>body{font-family:sans-serif} .hidden{ cursor: pointer; color: #fff; display:inline-block; border-bottom: 2px solid #CCC; } @keyframes appearance{0%{color: #fff}100%{color: black}}</style>';
+
+var rS=result.style;
+rS.width=screen.width*0.8+"px";
+rS.height=screen.height*0.8+"px";
+var dlBtn=document.getElementById('downloadBtn');
+var opBtn=document.getElementById('openBtn');
+var saveBtn=document.getElementById('saveBtn');
+var iS=inputTag.style;
+iS.width=screen.width*0.8+"px";
+iS.height="200px";
+//textareaからの読み込み
+function yMode1(){
+var target=inputTag.value;
+if (target.length!=0){
+var mark=markS.options[markS.selectedIndex].innerText;
+var s_mark=mark.slice(0,1);
+var e_mark=mark.slice(1,2);
+var cS=target;
+while(cS.indexOf(s_mark)>-1){cS=cS.replace(s_mark,'<div class="hidden">')}
+while(cS.indexOf(e_mark)>-1){cS=cS.replace(e_mark,'</div>')}
+var completed=cS;
+var file=encodeURIComponent(completed+sourceJS+sourceCSS);
+var url1="data:text/html;charset=UTF-8,"+file;
+result.src=url1;
+dlBtn.innerHTML='<a download="新規ノート.html" href="'+url1+'">ダウンロード</a>';
+opBtn.innerHTML='<a style="display:none" target="_blank" href="'+url1+'">新しいウィンドウで開く</a>';
+saveBtn.style.display="block";
+                     }else{inputTag.focus()}
+}
+//保存
+saveBtn.onclick=function(){
+if (typeof(result.src)!="undefined"){
+var source=result.src.slice(result.src.indexOf(',')+1,result.src.length+1);
+var nFileName;
+//新規作成の場合
+var mark=markS.options[markS.selectedIndex].innerText;
+var s_mark=mark.slice(0,1);
+var e_mark=mark.slice(1,2);
+var savedFileName2=[];//保存済みファイルの名前を配列化。
+if (savedFileName1!=null){savedFileName2=[savedFileName1.split(',')];}
+if (loadedFile==null){nFileName=prompt('ファイル名を入力'); while((nFileName=="")||(localStorage.getItem(nFileName)!=null)){nFileName=prompt('ファイル名が入力されていないか、同じ名前のファイルが既に存在します。別の名前を使用してください。')}}else{nFileName=loadedFile;}
+if (nFileName!=null){alert('保存しました。');localStorage.setItem(nFileName,source); if (savedFileName2.indexOf(nFileName)==-1){savedFileName2.push(nFileName)} localStorage.setItem('savedFileName',savedFileName2.toString());localStorage.setItem(nFileName+'mark',s_mark+e_mark);
+var n='<div class="list-n-n">'+nFileName+'</div>';
+if (listn.innerHTML=='<div class="nofile">保存済みのファイルはありません</div>'){
+listn.innerHTML=n;
+}else{listn.innerhTML+=n}
+};
+}else{alert("エラー:保存する内容がありません。")}
+}
+
+document.getElementById('openList').onclick = function(){
+list.style.display="block";
+list.style.left=screen.width/2+"px";
+list.style.top=screen.height/2+"px";
+}
+</script>
+<!--<script src="./EffectBtnJS.js" charset="utf-8" type="text/javascript"></script>-->
+<script>
+  function insertTag(tagName) {
+      const textarea = document.getElementById("input");
+      const tag = `<${tagName}></${tagName}>\n`; // 開始タグと終了タグ＋改行
+      textarea.value += (textarea.value ? '' : '') + tag; // 空でなければ改行
+      textarea.scrollTop = textarea.scrollHeight; // スクロールを最下部に
+  }
+  function insertBr() {
+            const textarea = document.getElementById("input");
+            textarea.value += "<br>\n"; // `<br>` は閉じタグ不要
+            textarea.scrollTop = textarea.scrollHeight;
+        }
+  function insertTable() {
+            let rows = prompt("行数を入力してください:", "3");
+            let cols = prompt("列数を入力してください:", "3");
+
+            rows = parseInt(rows, 10);
+            cols = parseInt(cols, 10);
+
+            if (isNaN(rows) || isNaN(cols) || rows <= 0 || cols <= 0) {
+                alert("正しい数値を入力してください");
+                return;
+            }
+
+            let tableHTML = `<table style="border-collapse:collapse" border="1">\n`;
+            for (let i = 0; i < rows; i++) {
+                tableHTML += `  <tr>\n`;
+                for (let j = 0; j < cols; j++) {
+                    tableHTML += `    <td> </td>\n`;
+                }
+                tableHTML += `  </tr>\n`;
+            }
+            tableHTML += `</table>\n`;
+
+            const textarea = document.getElementById("input");
+            textarea.value += (textarea.value ? '\n' : '') + tableHTML;
+            textarea.scrollTop = textarea.scrollHeight;
+        }
+</script>
+</body>
