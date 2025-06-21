@@ -1,0 +1,71 @@
+@font-face {
+		font-family: DiaPro;
+		src: url("../DiaProV1200/DiaPro-Regular.otf") format('opentype'),
+		     url("../DiaProV1200/DiaPro-Regular.woff") format('woff');
+	}
+textarea{resize: none}
+#mainTbl{
+border: 1px solid #000;
+border-collapse:collapse;
+font-family: DiaPro;
+width: max-content;
+}
+#result{margin: 10px;width: auto; overflow: scroll;}
+.time{border-right: 1px solid #000;text-align: center;}
+.traNameTd{width: 45px; height: 40px; font-size: 14px;text-align: center;font-family: sans-serif; cursor:pointer}
+.mainTrAr{border-bottom: 1px solid #111;}
+.stName{font-family: sans-serif;white-space: nowrap;position: sticky; top:0px; left: 0px;background: #fff;z-index:2;border-right: 1px solid #000}
+.stNameAr{font-family: sans-serif;white-space: nowrap;position: sticky; top:0px; left: 0px;background: #fff;z-index:2;border-right: 1px solid #000}
+#arTimeStaSelect{height: 120px}
+.fnlTr{border-top: 1px solid #000}
+.hiddenSta{display:none}
+
+#edit-mode-buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+
+.edit-mode-button {
+    width: 50px;
+    height: 50px;
+    text-align: center;
+    line-height: 50px;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+}
+
+.edit-mode-button.active {
+    background-color: #ddd;
+}
+
+.traNameTd.selected {
+    background-color: #add8e6;
+}
+
+.traNameTd.hover-swap {
+    box-shadow: 0 0 10px #888;
+}
+
+.hover-move-left {
+    border-left: 2px solid #333;
+}
+
+.hover-move-right {
+    border-right: 2px solid #333;
+}
+  .hidden {
+    display: none;
+  }
+  .filter-btn {
+    padding: 5px 10px;
+    margin: 5px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+  }
+  .filter-active {
+    background-color: #ccc;
+  }
+
