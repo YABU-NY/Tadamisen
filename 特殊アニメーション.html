@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>Rainy Glass Scene</title>
+<style>body{margin:0;overflow:hidden;background:#000;}canvas{display:block;}</style>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0,0,10);
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// 背景 environment (夜景風 HDR or cubemap)
+new THREE.CubeTextureLoader()
+  .setPath('path_to_hdr_or_cubemap/')
+  .load(['px.jpg','nx.jpg','py.jpg','ny.jpg','pz.jpg','nz.jpg'],
+    env => { scene.environment = env; scene.background = env; }
+  );
+
+// ----------------------
+// ガラスマテリアル
+const glassMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0xffffff,
+  roughness: 0.6,
+  transmission: 1.0,
+  ior: 1.6,
+  thickness: 0.5,
+  roughnessMap: new THREE.TextureLoader().load('textures/raindrop_rough.png'),
+  normalMap: new THREE.TextureLoader().load('textures/raindrop_normal.png'),
+  envMapIntensity: 1.0
+});
+// Three.jsのtransmission+roughnessMapで歪みとぼかしを制御：リアル感ある雨滴表現です :contentReference[oaicite:4]{index=4}
+
+const glass = new THREE.Mesh(new THREE.PlaneGeometry(8,8), glassMaterial);
+scene.add(glass);
+
+// ----------------------
+// 水滴粒子シミュレーション（重なり・合体・流れ）
+const drops = [];
+class Drop {
+  constructor() {
+    this.x = (Math.random()-0.5)*6;
+    this.y = 4 + Math.random()*2;
+    this.vy = - (0.02 + Math.random()*0.03);
+    this.radius = 0.1 + Math.random()*0.1;
+  }
+  update() {
+    this.y += this.vy;
+    // 合体（簡易）：近くのdropと距離が小さければサイズ拡張、速度調整
+    drops.forEach(o => {
+      const dx = this.x - o.x; const dy = this.y - o.y;
+      if (o !== this && Math.hypot(dx,dy) < (this.radius + o.radius)*0.8) {
+        this.radius += o.radius * 0.5;
+        o.radius *= 0.5;
+      }
+    });
+    if (this.y < -4) { this.y = 4; this.vy *= 0.8; }
+  }
+}
+
+for (let i=0;i<150;i++) drops.push(new Drop());
+
+// 粒子描画用 Mesh
+const dropGeo = new THREE.CircleGeometry(1, 16);
+const dropMesh = new THREE.InstancedMesh(dropGeo, new THREE.MeshBasicMaterial({color:0x88ccff, transparent:true, opacity:0.7}), drops.length);
+scene.add(dropMesh);
+
+// ----------------------
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  drops.forEach((d,i)=>{
+    d.update();
+    const m = new THREE.Object3D();
+    m.position.set(d.x,d.y,0.01);
+    m.scale.set(d.radius,d.radius,1);
+    m.updateMatrix();
+    dropMesh.setMatrixAt(i, m.matrix);
+  });
+  dropMesh.instanceMatrix.needsUpdate = true;
+
+  renderer.render(scene,camera);
+}
+
+animate();
+
+window.addEventListener('resize',()=> {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
