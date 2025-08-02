@@ -30,6 +30,7 @@
 <button onclick="wrapSelectedLineWithMath()">選択範囲の各行を数式化</button>
 <button onclick="wrapSelectionWithMath()">選択範囲を数式化</button>
 <button onclick="removeLineBreaksInSelection()">選択範囲の改行・空行を削除</button>
+<br><input type="checkbox" id="mode"><span>LaTeXコマンド部分一致モード：記号に変換されていないコマンドが変換されやすくなりますが、誤変換によるエラーも発生しやすくなります。</span>
 <h3>変換結果（HTML表示）:</h3>
 <div id="output" class="output"></div>
 
@@ -40,9 +41,14 @@
 
 <script>
   var converted=0;
+  var mode=0;
+  document.getElementById('mode').addEventListener('change',function(e){
+    if(e.target.checked='checked'){mode=1}else{mode=0}
+    convertGeminiToHTML();
+  });
   document.getElementById('inputText').addEventListener('change',function(){
     if(converted==1){convertGeminiToHTML()}
-  })
+  });
 function escapeHTML(str) {
   return str.replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -69,9 +75,27 @@ function cleanLatex(line) {
 
   // 一括で前にバックスラッシュがないコマンドだけをマッチ
   const pattern = new RegExp(`(?<!\\\\)\\b(${latexCommands.join('|')})\\b`, 'g');
+  //mode1用
+  const shortCommands = latexCommands.filter(cmd => cmd.length <= 3);
+const longCommands = latexCommands.filter(cmd => cmd.length > 3);
+
+const shortPattern = shortCommands.length
+  ? `(?<!\\\\)(?<![a-zA-Z])(${shortCommands.join('|')})(?![a-zA-Z])`
+  : null;
+
+const longPattern = longCommands.length
+  ? `(?<!\\\\)(${longCommands.join('|')})`
+  : null;
+
+const combinedPattern = [shortPattern, longPattern]
+  .filter(Boolean)
+  .join('|');
+
+const pattern1 = new RegExp(combinedPattern, 'g');
+const patterns=[pattern, pattern1];
   //const pattern = new RegExp(`(?<!\\\\)(${latexCommands.join('|')})`, 'g');
 
-  line = line.replace(pattern, match => '\\' + match);
+  line = line.replace(patterns[mode], match => '\\' + match);
 
   // 矢印系の後ろにスペースを入れる（必要なら）
   const spaceAfter = ['rightarrow', 'leftarrow', 'xrightarrow', 'xleftarrow', 'Rightarrow', 'Leftarrow', 'xrightleftharpoons', 'rightleftharpoons'];
@@ -433,6 +457,7 @@ function removeLineBreaksInSelection() {
   // 選択範囲を更新（省略可）
   textarea.selectionStart = start;
   textarea.selectionEnd = start + cleaned.length;
+  convertGeminiToHTML();
 }
 
 
