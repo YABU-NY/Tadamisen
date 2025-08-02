@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gemini テキスト → HTML変換</title>
+  <style>
+    body { font-family: sans-serif; }
+    .output {
+      white-space: pre-wrap;
+      border: 1px solid #ccc;
+      padding: 1em;
+      margin-top: 1em;
+    }
+    code { background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+    pre code { display: block; background: #eee; padding: 10px; }
+    table, th, td {
+      border: 1px solid #ccc;
+      border-collapse: collapse;
+      padding: 8px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+<h2>Geminiテキスト → HTML変換ツール</h2>
+
+<textarea id="inputText" rows="20" cols="80" placeholder="Geminiの出力をここに貼り付けてください..."></textarea><br>
+<label>フォントサイズ: <input type="number" id="fontSize" value="16">px</label><br><br>
+<button onclick="convertGeminiToHTML()">HTMLに変換</button>
+<button onclick="wrapSelectedLineWithMath()">選択範囲の各行を数式化</button>
+<button onclick="wrapSelectionWithMath()">選択範囲を数式化</button>
+<button onclick="removeLineBreaksInSelection()">選択範囲の改行・空行を削除</button>
+<h3>変換結果（HTML表示）:</h3>
+<div id="output" class="output"></div>
+
+<h3>HTMLソース:</h3>
+<button onclick="copyHTML()">HTMLをコピー</button>
+<span id="copyMsg" style="margin-left:10px; color: green;"></span>
+<pre id="htmlSource" class="output"></pre>
+
+<script>
+  var converted=0;
+  document.getElementById('inputText').addEventListener('change',function(){
+    if(converted==1){convertGeminiToHTML()}
+  })
+function escapeHTML(str) {
+  return str.replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+}
+
+function cleanLatex(line) {
+  const latexCommands = [
+    'rightleftharpoons', 'leftrightarrow',
+    'xrightarrow', 'xleftarrow',
+    'rightarrow', 'leftarrow',
+    'Rightarrow', 'Leftarrow', 'Leftrightarrow',
+    'implies', 'impliedby', 'iff',
+    'land', 'lor', 'lnot',
+    'in', 'notin', 'subseteq',
+    'le', 'ge', 'cdot',
+    'quad', 'qquad',
+    'text', 'times', 'sqrt', 'approx'
+  ];
+
+
+  // 長い順にソート（重要）
+  latexCommands.sort((a, b) => b.length - a.length);
+
+  // 一括で前にバックスラッシュがないコマンドだけをマッチ
+  const pattern = new RegExp(`(?<!\\\\)\\b(${latexCommands.join('|')})\\b`, 'g');
+  //const pattern = new RegExp(`(?<!\\\\)(${latexCommands.join('|')})`, 'g');
+
+  line = line.replace(pattern, match => '\\' + match);
+
+  // 矢印系の後ろにスペースを入れる（必要なら）
+  const spaceAfter = ['rightarrow', 'leftarrow', 'xrightarrow', 'xleftarrow', 'Rightarrow', 'Leftarrow', 'xrightleftharpoons', 'rightleftharpoons'];
+  for (const cmd of spaceAfter) {
+    const pattern = new RegExp(`\\\\${cmd}(?!\\s)`, 'g');
+    line = line.replace(pattern, `\\${cmd} `);
+  }
+
+  return line;
+}
+
+
+
+
+//これは各論
+/*
+function wrapInlineMath(text) {
+  const mathPatterns = [/\be[_]?g\b/g, /\bt[_]?2g\b/g, /\bd[_]?z2\b/g, /\b[et]\{[0-9a-z]+\}/g];
+  for (const pat of mathPatterns) {
+    text = text.replace(pat, match => `\\(${match.replace(/[{}]/g, '')}\\)`);
+  }
+  return text;
+}
+  */
+ function escapeAndMathifyLine(line) {
+  // 「\text」または「text」が含まれているか確認
+  const match = line.match(/(^|[^\\])(\b\\?text[A-Za-z0-9_]*\b)/);
+
+  if (match) {
+    // 「\text」または「text」の直前に \(
+    // 全体の中に \(...\) がすでに含まれていないかをチェック
+    if (!line.includes('\\(')) {
+      // textの直前に \( を入れて、最後に \) を追加
+      const index = match.index + match[1].length;
+      line = line.slice(0, index) + '\\(' + line.slice(index) + '\\)';
+    }
+  }
+
+  line=cleanLatex(line);
+  return line.replace(/\\?text(?!\s*\{)/g, '');//無用な「text」は削除
+}
+/*
+//"text"で始まっている行は\()\で囲って数式化 62行目以降に移行
+function escapeAndMathifyLine(line) {
+  if (/^\[?text[A-Za-z]/.test(line)) {
+    line = line.replace(/text([A-Za-z])/g, '\\text{$1}');
+    return `\\(${cleanLatex(line)}\\)`;
+  }
+  return line;
+}
+  */
+
+  //行列専門
+/*function fixMatrixAmpersands(input) {
+  // 正規表現で \begin{somethingmatrix} ... \end{somethingmatrix} を取得
+  const matrixRegex = /\\begin\{(\w*matrix)\}([\s\S]*?)\\end\{\1\}/g;
+
+  return input.replace(matrixRegex, (match, envName, content) => {
+    // content: 行列の中身（例えば "a & b \\ c & d"）
+    // 1. 行を分割（\\）
+    let rows = content.split(/\\\\/);
+
+    // 2. 各行の列数をチェック
+    let maxCols = 0;
+    const splitRows = rows.map(row => {
+      // &で分割。空白はtrim
+      const cols = row.split('&').map(s => s.trim());
+      if (cols.length > maxCols) maxCols = cols.length;
+      return cols;
+    });
+
+    // 3. 列数を揃える（足りない行は空文字で埋める）
+    const fixedRows = splitRows.map(cols => {
+      while (cols.length < maxCols) {
+        cols.push(''); // 空要素を追加
+      }
+      return cols.join(' & ');
+    });
+
+    // 4. 行を \\ で繋ぎ直す（行末に余計な空白を入れない）
+    const fixedContent = fixedRows.join(' \\\\ ');
+
+    // 5. 修正したものを返す
+    return `\\begin{${envName}}${fixedContent}\\end{${envName}}`;
+  });
+}
+*/
+function fixMatrixAmpersands(input) {
+  const matrixRegex = /\\begin\{(\w*matrix)\}([\s\S]*?)\\end\{\1\}/g;
+
+  return input.replace(matrixRegex, (fullMatch, envName, content) => {
+    // 1. まず既存の \\ は残すため温存、代わりに一時置換
+    const ESC_DOUBLE = '<<ESC_DOUBLE>>';
+    let temp = content.replace(/\\\\/g, ESC_DOUBLE);
+
+    // 2. 次に \ + 空白（\ ）は行区切りの可能性が高いので \\ に置換
+    temp = temp.replace(/\\\s+/g, '\\\\');
+
+    // 3. 次に & で要素を分割（改行削除）
+    let elements = temp.replace(/\n/g, '').split('&').map(e => e.trim()).filter(e => e !== '');
+
+    // 4. 行数を推測するために \\ を元に戻す前に行区切り候補をカウント
+    // 今はESC_DOUBLEに置換してあるので、これが行区切り
+    // ない場合は正方行列を推測
+    let rowCount = temp.split(ESC_DOUBLE).length;
+
+    if (rowCount === 1) {
+      // 行区切りがない＝1行だけ？ → 正方行列判定
+      const n = Math.sqrt(elements.length);
+      if (Number.isInteger(n)) {
+        // n個ごとに区切って行区切りを入れる
+        let rows = [];
+        for (let i = 0; i < elements.length; i += n) {
+          rows.push(elements.slice(i, i + n).join(' & '));
+        }
+        temp = rows.join(' \\\\ ');
+      } else {
+        // 正方行列でもない → 元の \（単一）を行区切りとして扱っていないのでそのまま
+        temp = elements.join(' & ');
+      }
+    } else {
+      // 既に複数行区切りあり → ESC_DOUBLE を元に戻すだけ
+      temp = temp.split(ESC_DOUBLE).join(' \\\\ ');
+    }
+
+    // 最後に改行文字などを元に戻しつつトリムして返す
+    return `\\begin{${envName}}${temp}\\end{${envName}}`;
+  });
+}
+ //改行の入った数式などをまとめる 
+function mergeDisplayMathBlocks(lines) {
+  const mergedLines = [];
+  let inDisplayMath = false;
+  let buffer = [];
+
+  for (let line of lines) {
+    if (line.trim() === '$$') {
+      if (!inDisplayMath) {
+        // 開始行（$$のみ）
+        inDisplayMath = true;
+        buffer = [line]; // 開始の$$を入れる
+      } else {
+        // 終了行（$$のみ）
+        buffer.push(line); // 終了の$$を入れる
+
+        // bufferの中間部分（開始・終了$$以外）の改行・空行を削除しまとめる
+        // 例: $$ \n 行1 \n \n 行2 \n $$
+        // → $$ 行1 行2 $$
+        const contentLines = buffer.slice(1, -1);
+        const joined = contentLines
+          .map(l => l.trim())
+          .filter(l => l.length > 0)
+          .join(' '); // 空白区切りで結合
+
+        mergedLines.push('$$ ' + joined + ' $$');
+
+        inDisplayMath = false;
+        buffer = [];
+      }
+    } else if (inDisplayMath) {
+      // display math 内の行をバッファに追加
+      buffer.push(line);
+    } else {
+      // 通常行
+      mergedLines.push(line);
+    }
+  }
+
+  // display math が閉じていない場合はbufferをそのまま戻す（あるいはエラー処理）
+  if (inDisplayMath) {
+    mergedLines.push(...buffer);
+  }
+
+  return mergedLines;
+}
+function convertGeminiToHTML() {
+  converted=1;
+  const raw = document.getElementById("inputText").value;
+  const fontSize = document.getElementById("fontSize").value;
+  const lines = mergeDisplayMathBlocks(raw.split('\n'));
+
+  let html = '';
+  let inCode = false;
+  let codeBuffer = [];
+
+  for (let line of lines) {
+    const original = line;
+    line = escapeAndMathifyLine(line);
+
+    if (line.trim() === '```') {
+      inCode = !inCode;
+      if (!inCode) {
+        html += `<pre><code>${codeBuffer.join('\n')}</code></pre>`;
+        codeBuffer = [];
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeBuffer.push(original);
+      continue;
+    }
+
+    line = line
+      .replace(/\\\*\\\*/g, '**')
+      .replace(/∗∗/g, '**')
+      .replace(/∗/g, '_')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^###\s*(.+)$/gm, '<h3>$1</h3>')
+      .replace(/\[cite[^\]]*\]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/\$(.+?)\$/g, (_, expr) => `\\(${cleanLatex(expr)}\\)`)
+      .replace(/text([A-Za-z0-9_]+)/g, (_, word) => `\\text{${word}}`)
+      .replace(/\\text{([^}]+?)\\text/g, '\\text{$1}')
+      .replace(/\$(\\text{[^}]+})/g, '\\($1\\)')
+      .replace(/\\\\/g, '\\')
+      .replace(/\\(implies|rightarrow|leftarrow|xrightarrow|xleftarrow|Rightarrow|Leftarrow|rightleftharpoons|sqrt|times|xrightleftharpoons)(?=[A-Za-z0-9])/g, '\\$1 ')
+      .replace(/\\text{([^{}]*)\\text{([^{}]+)}([^}]*)}/g, (match, before, inner, after) => {
+        // 例: \text{Ru(\text{NH_3})_6} → \text{Ru(NH_3)_6}
+           return `\\text{${before}${inner}${after}}`;
+         })
+      .replace(/\\text\{([^}]*)\}/g, (match, content) => {
+        // \) や \] など、text{} の中では使ってはいけない \記号を除去
+        const cleaned = content.replace(/\\([\[\]\(\)])/g, '$1');
+         return `\\text{${cleaned}}`
+         })
+      .replace(/\\\((.*?)\\\)/g, (match, content) => {
+        // 中にある \(...\), \[...\], \), \( → \( ) などの \ を消す
+        const cleaned = content.replace(/\\([\[\]\(\)])/g, '$1');
+        return `\\(${cleaned}\\)`;
+         })
+         .replace(/\$\$\s*([\s\S]*?)\s*\$\$/g, (match, content) => {
+    const trimmed = content.trim();
+    return `$$\n${trimmed}\n$$`;
+  });
+line=fixMatrixAmpersands(line);
+
+   // line = wrapInlineMath(line);
+
+    if (line.trim() === '') {
+      html += '<br>';
+    } else {
+      html += `<p>${line}</p>`;
+    }
+  }
+
+  const styled = `<div style="font-size:${fontSize}px;">${html}</div>`;
+  document.getElementById('output').innerHTML = styled;
+
+  // HTML source表示用：エスケープして表示
+  const fullHTML = `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"><\/script>
+</head>
+<body>
+${styled}
+</body>
+</html>
+  `.trim();
+
+  document.getElementById('htmlSource').textContent = fullHTML;
+
+  if (window.MathJax) MathJax.typesetPromise();
+}
+
+function copyHTML() {
+  const html = document.getElementById('htmlSource').textContent;
+  navigator.clipboard.writeText(html).then(() => {
+    document.getElementById('copyMsg').textContent = 'コピーしました！';
+    setTimeout(() => {
+      document.getElementById('copyMsg').textContent = '';
+    }, 2000);
+  });
+}
+
+function wrapSelectedLineWithMath() {
+  const textarea = document.getElementById('inputText');
+  const value = textarea.value;
+  const selectionStart = textarea.selectionStart;
+  const selectionEnd = textarea.selectionEnd;
+
+  // 全体を行単位で分割
+  const lines = value.split('\n');
+
+  // 何行目が選択されているか特定
+  let currentPos = 0;
+  let startLineIndex = 0;
+  let endLineIndex = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineLength = lines[i].length + 1; // +1 for \n
+
+    if (selectionStart >= currentPos) startLineIndex = i;
+    if (selectionEnd >= currentPos) endLineIndex = i;
+
+    currentPos += lineLength;
+  }
+
+  // 選択された行の前後に \\( と \\) を追加
+  for (let i = startLineIndex; i <= endLineIndex; i++) {
+    if (!lines[i].startsWith('\\(')) lines[i] = '\\(' + lines[i];
+    if (!lines[i].endsWith('\\)')) lines[i] += '\\)';
+  }
+
+  // テキストエリアに戻す
+  textarea.value = lines.join('\n');
+
+  // 変換関数を実行
+  if (typeof convertGeminiToHTML === 'function') {
+    convertGeminiToHTML();
+  }
+}
+//選択された範囲
+function wrapSelectionWithMath() {
+  const textarea = document.getElementById('inputText');
+  const value = textarea.value;
+  const selectionStart = textarea.selectionStart;
+  const selectionEnd = textarea.selectionEnd;
+
+  const before = value.slice(0, selectionStart);
+  const selected = value.slice(selectionStart, selectionEnd);
+  const after = value.slice(selectionEnd);
+
+  // すでに囲まれていなければ追加
+  if (!selected.startsWith('\\(') && !selected.endsWith('\\)')) {
+    const wrapped = `\\(${selected}\\)`;
+
+    // 更新
+    textarea.value = before + wrapped + after;
+
+    // カーソル位置更新（任意）
+    textarea.selectionStart = selectionStart;
+    textarea.selectionEnd = selectionStart + wrapped.length;
+
+    // 必要であれば convert 関数も
+    if (typeof convertGeminiToHTML === 'function') {
+      convertGeminiToHTML();
+    }
+  }
+}
+function removeLineBreaksInSelection() {
+  const textarea = document.getElementById('inputText');
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+
+  const before = textarea.value.slice(0, start);
+  const selected = textarea.value.slice(start, end);
+  const after = textarea.value.slice(end);
+
+  // 改行・空行を削除（全ての \n, \r を取り除く）
+  const cleaned = selected.replace(/[\r\n]+/g, ' '); // 空白でつなげる（任意）
+
+  // テキストエリアを更新
+  textarea.value = before + cleaned + after;
+
+  // 選択範囲を更新（省略可）
+  textarea.selectionStart = start;
+  textarea.selectionEnd = start + cleaned.length;
+}
+
+
+</script>
+</body>
+</html>
